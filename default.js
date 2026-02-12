@@ -33,6 +33,21 @@ let comboTimeout = null;
 
 // Cookie pulse effect
 let cookiePulse = {time:0,duration:180,maxScale:1};
+let cookieRotation = 0; // degrees
+let lastEffectTime = Date.now();
+const cookieImageURL = "https://raw.githubusercontent.com/nonfunctable/cookie-clicker/refs/heads/main/CookieVector.png";
+let cookieImg = null;
+let showIntro = false;
+let introButtonArea = null;
+let showOfflinePopup = false;
+let offlineEarned = 0;
+let offlineSeconds = 0;
+let offlineButtonArea = null;
+
+// Hold-to-charge
+let isHolding = false;
+let holdStartTime = 0;
+let holdScale = 0.88;
 
 let lastSavedTime = Date.now();
 
@@ -69,12 +84,13 @@ function loadGame(){
         prestigePoints = save.prestigePoints || 0;
         prestigeMultiplier = save.prestigeMultiplier || (1 + prestigePoints*0.1);
         
-        // Offline progress
+        // Offline progress: compute but show popup instead of immediately adding
         let secondsAway = Math.floor((Date.now() - save.lastSaved)/1000);
-        let earned = secondsAway * getCPS();
-        cookies += earned;
+        let earned = Math.floor(secondsAway * getCPS());
         if(earned > 0){
-            showAchievement("Offline Earnings +" + formatNumber(earned));
+            offlineEarned = earned;
+            offlineSeconds = secondsAway;
+            showOfflinePopup = true;
         }
     }
 }
@@ -83,9 +99,16 @@ function loadGame(){
 function main(){
     loadGame();
     calculateLayout();
+    // create and cache the cookie image once to avoid flicker
+    cookieImg = new WebImage(cookieImageURL);
+    cookieImg.setAnchor({vertical:0.5, horizontal:0.5});
+    // intro overlay suppressed; show offline popup if applicable
+    if(!localStorage.getItem('seenIntro')) showIntro = false;
     drawEverything();
     
     mouseClickMethod(handleClick);
+    mouseDownMethod(handleMouseDown);
+    mouseUpMethod(handleMouseUp);
     mouseMoveMethod(handleHover);
     
     setTimer(gameTick,1000);
@@ -116,6 +139,112 @@ function drawEverything(){
     drawShop();
     drawCookie();
     drawGoldenCookie();
+    if(showOfflinePopup) drawOfflinePopup();
+}
+
+function drawOfflinePopup(){
+    // small centered popup showing offline earnings
+    // dim background so panel is readable
+    let overlay = new Rectangle(getWidth(), getHeight());
+    overlay.setPosition(0,0);
+    overlay.setColor(new Color(0,0,0));
+    overlay.layer = 58;
+    add(overlay);
+
+    let w = 420;
+    let h = 180;
+    let x = (getWidth()-w)/2;
+    let y = (getHeight()-h)/2;
+
+    let panel = new Rectangle(w,h);
+    panel.setPosition(x,y);
+    panel.setColor(new Color(250,250,250));
+    panel.layer = 60;
+    add(panel);
+
+    let title = new Text("Welcome Back!","20pt Arial");
+    title.setColor(Color.WHITE);
+    title.setPosition(x+18, y+16);
+    add(title);
+    let info = new Text("You were away for "+offlineSeconds+"s and earned "+formatNumber(offlineEarned)+" cookies.", "16pt Arial");
+    info.setColor(Color.WHITE);
+    info.setPosition(x+18, y+56);
+    add(info);
+
+    // Close X in top-right of panel
+    let bx = x + w - 36;
+    let by = y + 8;
+    let bxw = 28; let bxh = 28;
+    let btn = new Rectangle(bxw,bxh);
+    btn.setPosition(bx, by);
+    btn.setColor(new Color(200,60,60));
+    add(btn);
+    let xl = new Text("X","14pt Arial");
+    xl.setColor(Color.WHITE);
+    xl.setPosition(bx + bxw/2 - xl.getWidth()/2, by + bxh/2 + 5);
+    add(xl);
+
+    offlineButtonArea = {x:bx, y:by, w:bxw, h:bxh};
+}
+
+function drawIntro(){
+    // semi-opaque overlay
+    let overlay = new Rectangle(getWidth(), getHeight());
+    overlay.setPosition(0,0);
+    overlay.setColor(new Color(0,0,0));
+    add(overlay);
+    overlay.layer = 50;
+
+    let panelW = Math.min(600, getWidth()*0.8);
+    let panelH = Math.min(380, getHeight()*0.7);
+    let px = (getWidth()-panelW)/2;
+    let py = (getHeight()-panelH)/2;
+    let panel = new Rectangle(panelW, panelH);
+    panel.setPosition(px, py);
+    panel.setColor(new Color(245,245,245));
+    panel.layer = 51;
+    add(panel);
+
+    let title = new Text("What's New","24pt Arial");
+    title.setColor(Color.BLACK);
+    title.setPosition(px + 18, py + 26);
+    title.layer = 52;
+    add(title);
+
+    let lines = [
+        "- Prestige / Rebirth system (gain permanent multiplier)",
+        "- True combo stacking visuals and crits",
+        "- Building purchase visual polish (rebirth keeps celebratory)",
+        "- Cookie as a vector image with smooth pulse + rotation",
+        "- Hold cookie to charge a stronger press (release to apply)"
+    ];
+
+    for(let i=0;i<lines.length;i++){
+        let t = new Text(lines[i], "14pt Arial");
+        t.setColor(new Color(100,100,100));
+        t.setPosition(px + 18, py + 64 + i*26);
+        t.layer = 52;
+        add(t);
+    }
+
+    // Close button
+    let bx = px + panelW - 120;
+    let by = py + panelH - 60;
+    let bw = 100;
+    let bh = 36;
+    let btn = new Rectangle(bw, bh);
+    btn.setPosition(bx, by);
+    btn.setColor(new Color(40,160,40));
+    btn.layer = 53;
+    add(btn);
+
+    let bl = new Text("Got it","16pt Arial");
+    bl.setColor(Color.WHITE);
+    bl.setPosition(bx + bw/2 - bl.getWidth()/2, by + bh/2 + 6);
+    bl.layer = 54;
+    add(bl);
+
+    introButtonArea = {x:bx, y:by, w:bw, h:bh};
 }
 
 function drawBackground(){
@@ -142,7 +271,7 @@ function drawTopBar(){
     add(cpsText);
 
     let prestigeText = new Text("Prestige: "+prestigePoints+" (x"+prestigeMultiplier.toFixed(2)+")","14pt Arial");
-    prestigeText.setColor(Color.LIGHT_GRAY);
+    prestigeText.setColor(new Color(200,200,200));
     prestigeText.setPosition(getWidth()-prestigeText.getWidth()-20,20);
     add(prestigeText);
 }
@@ -197,22 +326,16 @@ function drawButton(text,y,h,cost){
 
 // ---------------- COOKIE ----------------
 function drawCookie(){
-    let c = new Circle(cookieRadius);
-    c.setPosition(cookieX,cookieY);
-    c.setColor(new Color(181,101,29));
-    add(c);
-    
-    for(let i=0;i<20;i++){
-        let angle = Randomizer.nextFloat(0,Math.PI*2);
-        let dist = Randomizer.nextFloat(0,cookieRadius-10);
-        let x = cookieX + Math.cos(angle)*dist;
-        let y = cookieY + Math.sin(angle)*dist;
-        
-        let chip = new Circle(5);
-        chip.setPosition(x,y);
-        chip.setColor(Color.BLACK);
-        add(chip);
+    // Draw the cookie as a cached WebImage to avoid reloading each frame
+    if(!cookieImg){
+        cookieImg = new WebImage(cookieImageURL);
+        cookieImg.setAnchor({vertical:0.5, horizontal:0.5});
     }
+    let size = Math.max(2, cookieRadius * 2);
+    cookieImg.setSize(size, size);
+    cookieImg.setPosition(cookieX, cookieY);
+    cookieImg.setRotation(cookieRotation);
+    add(cookieImg);
 }
 
 // ---------------- GOLDEN COOKIE ----------------
@@ -236,6 +359,7 @@ function drawGoldenCookie(){
 
 // ---------------- INPUT ----------------
 function handleClick(e){
+    if(showOfflinePopup){ handleOfflineClick(e); return; }
     
     let dx = e.getX()-cookieX;
     let dy = e.getY()-cookieY;
@@ -243,29 +367,9 @@ function handleClick(e){
     
     if(distance <= cookieRadius){
         // Combo handling
-        let now = Date.now();
-        if(now - lastClickTime <= 600){
-            comboCount++;
-        } else {
-            comboCount = 1;
-        }
-        lastClickTime = now;
-        if(comboTimeout) clearTimeout(comboTimeout);
-        comboTimeout = setTimeout(function(){ comboCount = 0; },1200);
-
-        let crit = (Randomizer.nextInt(1,20) === 1);
-        let baseGained = cookiesPerClick * (crit?5:1);
-        let comboMultiplier = 1 + (Math.max(0,comboCount-1) * 0.15);
-        let gained = Math.floor(baseGained * comboMultiplier * prestigeMultiplier);
-        cookies += gained;
-        createFloatingText("+"+formatNumber(gained),e.getX(),e.getY());
-        if(comboCount>1) createComboVisual(comboCount);
-        // start pulse (animated)
-        cookiePulse.time = cookiePulse.duration;
-        cookiePulse.maxScale = 1 + Math.min(0.35, comboCount*0.03);
-        redraw();
-        checkAchievements();
-        return;
+            // treat as instant click (no hold)
+            performCookieClick(e.getX(), e.getY(), 1);
+            return;
     }
     
     // Golden cookie click
@@ -283,6 +387,31 @@ function handleClick(e){
     }
     
     handleShopClick(e);
+}
+
+function handleIntroClick(e){
+    if(!introButtonArea) return;
+    if(e.getX() >= introButtonArea.x && e.getX() <= introButtonArea.x + introButtonArea.w
+       && e.getY() >= introButtonArea.y && e.getY() <= introButtonArea.y + introButtonArea.h){
+        showIntro = false;
+        localStorage.setItem('seenIntro','1');
+        redraw();
+    }
+}
+
+function handleOfflineClick(e){
+    if(!offlineButtonArea) return;
+    if(e.getX() >= offlineButtonArea.x && e.getX() <= offlineButtonArea.x + offlineButtonArea.w
+       && e.getY() >= offlineButtonArea.y && e.getY() <= offlineButtonArea.y + offlineButtonArea.h){
+        // collect offline cookies and close
+        cookies += offlineEarned;
+        showAchievement("Collected "+formatNumber(offlineEarned)+" offline cookies");
+        offlineEarned = 0;
+        offlineSeconds = 0;
+        showOfflinePopup = false;
+        offlineButtonArea = null;
+        redraw();
+    }
 }
 
 function handleHover(e){
@@ -303,6 +432,55 @@ function handleHover(e){
         if(e.getY()>=y && e.getY()<=y+btnHeight){ hoverY = y; return; }
         y+=btnHeight+8;
     }
+}
+
+function handleMouseDown(e){
+    if(showIntro) return;
+    // start hold if pressing on cookie
+    let dx = e.getX()-cookieX;
+    let dy = e.getY()-cookieY;
+    let distance = Math.sqrt(dx*dx+dy*dy);
+    if(distance <= cookieRadius){
+        isHolding = true;
+        holdStartTime = Date.now();
+        redraw();
+    }
+}
+
+function handleMouseUp(e){
+    if(showIntro) return;
+    if(!isHolding) return;
+    isHolding = false;
+    let holdDuration = Date.now() - holdStartTime; // ms
+    // compute extra multiplier from hold (cap)
+    let extra = 1 + Math.min(3, (holdDuration/1000) * 0.9);
+    performCookieClick(e.getX(), e.getY(), extra);
+}
+
+function performCookieClick(x,y, extraMultiplier){
+    // combo handling
+    let now = Date.now();
+    if(now - lastClickTime <= 600){
+        comboCount++;
+    } else {
+        comboCount = 1;
+    }
+    lastClickTime = now;
+    if(comboTimeout) clearTimeout(comboTimeout);
+    comboTimeout = setTimeout(function(){ comboCount = 0; },1200);
+
+    let crit = (Randomizer.nextInt(1,20) === 1);
+    let baseGained = cookiesPerClick * (crit?5:1);
+    let comboMultiplier = 1 + (Math.max(0,comboCount-1) * 0.15);
+    let gained = Math.floor(baseGained * comboMultiplier * prestigeMultiplier * extraMultiplier);
+    cookies += gained;
+    createFloatingText("+"+formatNumber(gained),x,y);
+    if(comboCount>1) createComboVisual(comboCount);
+    // start pulse (animated) larger for bigger extraMultiplier
+    cookiePulse.time = cookiePulse.duration;
+    cookiePulse.maxScale = 1 + Math.min(0.6, comboCount*0.03 + (extraMultiplier-1)*0.25);
+    redraw();
+    checkAchievements();
 }
 
 // ---------------- GAME LOGIC ----------------
@@ -344,7 +522,6 @@ function handleShopClick(e){
             if(cookies>=cost){
                 cookies-=cost;
                 generators[i].owned++;
-                playBuyEffect(i);
             }
             redraw();
             return;
@@ -441,20 +618,31 @@ function updateParticles(){
 }
 
 function updateEffects(){
+    let now = Date.now();
+    let dt = now - lastEffectTime;
+    lastEffectTime = now;
+
     // animate cookie pulse
-    if(cookiePulse.time > 0){
-        cookiePulse.time -= 30;
+    if(isHolding){
+        // maintain pressed (smaller) size while holding
+        cookieRadius = cookieBaseRadius * holdScale;
+    } else if(cookiePulse.time > 0){
+        cookiePulse.time -= dt;
         if(cookiePulse.time < 0) cookiePulse.time = 0;
         let t = 1 - (cookiePulse.time / cookiePulse.duration); // 0->1
         // easeOutQuad
         let ease = 1 - (1 - t) * (1 - t);
         let scale = 1 + (cookiePulse.maxScale - 1) * ease;
         cookieRadius = cookieBaseRadius * scale;
-        redraw();
-    } else if(cookieRadius !== cookieBaseRadius){
+    } else {
         cookieRadius = cookieBaseRadius;
-        redraw();
     }
+
+    // slow rotation (degrees per ms)
+    let rotationSpeedDegPerMs = 0.004; // ~4 deg/sec
+    cookieRotation = (cookieRotation + rotationSpeedDegPerMs * dt) % 360;
+
+    redraw();
 }
 
 function updateFloatingTexts(){
